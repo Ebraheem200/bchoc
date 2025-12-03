@@ -1,68 +1,88 @@
-# bchoc/commands/show_items_cmd.py
-import uuid
+# bchoc/commands/show_cmd.py
+from argparse import _SubParsersAction, ArgumentParser
 
-from bchoc.env import get_role_for_password
-from bchoc.ids import case_uuid_to_enc32, enc32_to_item_id
-from bchoc.storage import get_latest_items
+from .show_cases_cmd import run_show_cases
+from .show_items_cmd import run_show_items
+from .show_history_cmd import run_show_history
 
-def run_show_items(args) -> int:
-    # 1) Validate case_id (must be UUID)
-    try:
-        uuid.UUID(args.case_id)
-    except Exception:
-        print("> Invalid case ID (must be a UUID)")
-        return 1
 
-    # Encrypted form used for equality comparison
-    case_enc_filter = case_uuid_to_enc32(args.case_id)
+def add_show_subparsers(show_parser: ArgumentParser) -> None:
+    show_sub = show_parser.add_subparsers(dest="show_what", required=True)
 
-    # 2) Determine whether we have a valid owner password
-    #    - If password is valid => show decrypted values
-    #    - If password is missing or invalid => show encrypted hex
-    role = None
-    if getattr(args, "password", None) is not None:
-        role = get_role_for_password(args.password)
-    has_priv = role is not None
+    # ---------------- show cases ----------------
+    sp_show_cases = show_sub.add_parser("cases", help="List all cases")
+    sp_show_cases.add_argument(
+        "-p",
+        "--password",
+        required=False,
+        help="Password (shows decrypted case IDs if valid)",
+    )
+    sp_show_cases.set_defaults(func=run_show_cases)
 
-    # 3) Get latest items and filter by case_enc
-    all_latest = get_latest_items()
-    filtered = [
-        (item_enc, case_enc, state_bytes, creator_bytes, owner_bytes)
-        for item_enc, (case_enc, state_bytes, creator_bytes, owner_bytes)
-        in all_latest.items()
-        if case_enc == case_enc_filter
-    ]
+    # ---------------- show items ----------------
+    sp_show_items = show_sub.add_parser("items", help="List items in a case")
+    sp_show_items.add_argument(
+        "-c",
+        "--case_id",
+        required=True,
+        help="Case UUID",
+    )
+    sp_show_items.add_argument(
+        "-p",
+        "--password",
+        required=False,
+        help="Password (shows decrypted IDs if valid)",
+    )
+    sp_show_items.set_defaults(func=run_show_items)
 
-    if not filtered:
-        if has_priv:
-            print(f"> No items found for case {args.case_id}")
-        else:
-            print(f"> No items found for case {args.case_id}")
-        return 0
+    # ---------------- show history --------------
+    sp_show_hist = show_sub.add_parser("history", help="Show history of blocks")
+    sp_show_hist.add_argument(
+        "-c",
+        "--case_id",
+        required=False,
+        help="Case UUID filter",
+    )
+    sp_show_hist.add_argument(
+        "-i",
+        "--item_id",
+        required=False,
+        help="Item ID filter (integer)",
+    )
+    sp_show_hist.add_argument(
+        "-n",
+        "--num_entries",
+        type=int,
+        required=False,
+        help="Limit to N entries",
+    )
+    sp_show_hist.add_argument(
+        "-r",
+        "--reverse",
+        action="store_true",
+        help="Show newest entries first",
+    )
+    sp_show_hist.add_argument(
+        "-p",
+        "--password",
+        required=False,
+        help="Password (shows decrypted IDs if valid)",
+    )
+    sp_show_hist.set_defaults(func=run_show_history)
 
-    # 4) Print results
-    for idx, (item_enc, case_enc, state_bytes, creator_bytes, owner_bytes) in enumerate(filtered, start=1):
-        state = state_bytes.rstrip(b"\x00").decode("ascii", errors="replace")
-        creator = creator_bytes.rstrip(b"\x00").decode("ascii", errors="replace") or "(none)"
-        owner = owner_bytes.rstrip(b"\x00").decode("ascii", errors="replace") or "(none)"
+def run_show(args) -> int:
+    # If argparse already set args.func, just call it:
+    if hasattr(args, "func"):
+        return args.func(args)
 
-        if has_priv:
-            # Decrypted view
-            item_str = str(enc32_to_item_id(item_enc))
-            case_str = args.case_id
-        else:
-            # Encrypted/obfuscated view
-            item_hex = item_enc.hex()
-            case_hex = case_enc.hex()
-            item_str = item_hex
-            case_str = case_hex
+    # Fallback: manual dispatch based on show_what
+    sub = getattr(args, "show_what", None)
+    if sub == "cases":
+        return run_show_cases(args)
+    if sub == "items":
+        return run_show_items(args)
+    if sub == "history":
+        return run_show_history(args)
 
-        print(f"> Item #{idx}")
-        print(f">   Case : {case_str}")
-        print(f">   Item : {item_str}")
-        print(f">   State: {state}")
-        print(f">   Creator: {creator}")
-        print(f">   Owner  : {owner}")
-        print()
-
-    return 0
+    print("> Unknown show subcommand")
+    return 1
