@@ -1,24 +1,15 @@
 # bchoc/commands/checkin_cmd.py
-"""
-Implements: bchoc checkin
-- Any valid role password allowed.
-- Item must currently be CHECKEDOUT (and not terminal).
-- On checkin, owner is cleared.
-"""
+from datetime import datetime, timezone
 
-from bchoc.env import get_role_for_password
-from bchoc.ids import item_id_to_enc32
+from bchoc.env import require_owner_password
+from bchoc.ids import item_id_to_enc32, enc32_to_case_uuid
 from bchoc.storage import get_latest_items, append_block
 
 TERMINAL_STATES = {"DISPOSED", "DESTROYED", "RELEASED"}
 
-
 def run_checkin(args) -> int:
-    # 1) Check password (any valid role)
-    role = get_role_for_password(args.password)
-    if role is None:
-        print("> Invalid password")
-        return 1
+    # 1) Check password (any owner-level password)
+    require_owner_password(args.password)
 
     # 2) Parse item id
     try:
@@ -29,7 +20,7 @@ def run_checkin(args) -> int:
 
     item_enc = item_id_to_enc32(item_id_int)
 
-    # 3) Get latest state
+    # 3) Get latest state for this item
     latest = get_latest_items()
     if item_enc not in latest:
         print(f"> Item {item_id_int} not found in blockchain.")
@@ -46,7 +37,7 @@ def run_checkin(args) -> int:
         print(f"> Item {item_id_int} must be CHECKEDOUT to checkin (current: {state}).")
         return 1
 
-    # 4) On checkin, owner becomes blank
+    # 4) On checkin, owner becomes blank (no outstanding checkout)
     owner_bytes = b""
 
     # 5) Append CHECKEDIN block
@@ -59,6 +50,19 @@ def run_checkin(args) -> int:
         data=b"",
     )
 
+    # Prepare time string for output (UTC, ISO 8601 with Z)
+    action_time = (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+    # Decode case UUID for printing
+    case_str = enc32_to_case_uuid(case_enc)
+
+    print(f"> Case: {case_str}")
     print(f"> Checked in item: {item_id_int}")
     print("> Status: CHECKEDIN")
+    print(f"> Time of action: {action_time}")
+
     return 0
