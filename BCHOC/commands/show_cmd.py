@@ -1,35 +1,68 @@
 # bchoc/commands/show_items_cmd.py
-"""
-Implements: bchoc show-items
-Debug-style listing of latest state for each item.
-"""
+import uuid
 
+from bchoc.env import get_role_for_password
+from bchoc.ids import case_uuid_to_enc32, enc32_to_item_id
 from bchoc.storage import get_latest_items
 
 def run_show_items(args) -> int:
-    items = get_latest_items()
+    # 1) Validate case_id (must be UUID)
+    try:
+        uuid.UUID(args.case_id)
+    except Exception:
+        print("> Invalid case ID (must be a UUID)")
+        return 1
 
-    if not items:
-        print("> No items in blockchain.")
+    # Encrypted form used for equality comparison
+    case_enc_filter = case_uuid_to_enc32(args.case_id)
+
+    # 2) Determine whether we have a valid owner password
+    #    - If password is valid => show decrypted values
+    #    - If password is missing or invalid => show encrypted hex
+    role = None
+    if getattr(args, "password", None) is not None:
+        role = get_role_for_password(args.password)
+    has_priv = role is not None
+
+    # 3) Get latest items and filter by case_enc
+    all_latest = get_latest_items()
+    filtered = [
+        (item_enc, case_enc, state_bytes, creator_bytes, owner_bytes)
+        for item_enc, (case_enc, state_bytes, creator_bytes, owner_bytes)
+        in all_latest.items()
+        if case_enc == case_enc_filter
+    ]
+
+    if not filtered:
+        if has_priv:
+            print(f"> No items found for case {args.case_id}")
+        else:
+            print(f"> No items found for case {args.case_id}")
         return 0
 
-    print("> Latest state per item:")
-    for idx, (item_enc, (case_enc, state_bytes, creator_bytes, owner_bytes)) in enumerate(items.items(), start=1):
+    # 4) Print results
+    for idx, (item_enc, case_enc, state_bytes, creator_bytes, owner_bytes) in enumerate(filtered, start=1):
         state = state_bytes.rstrip(b"\x00").decode("ascii", errors="replace")
         creator = creator_bytes.rstrip(b"\x00").decode("ascii", errors="replace") or "(none)"
         owner = owner_bytes.rstrip(b"\x00").decode("ascii", errors="replace") or "(none)"
 
-        item_hex = item_enc.hex()
-        case_hex = case_enc.hex()
+        if has_priv:
+            # Decrypted view
+            item_str = str(enc32_to_item_id(item_enc))
+            case_str = args.case_id
+        else:
+            # Encrypted/obfuscated view
+            item_hex = item_enc.hex()
+            case_hex = case_enc.hex()
+            item_str = item_hex
+            case_str = case_hex
 
-        # shorten hex to keep printout readable
-        item_short = f"{item_hex[:8]}…{item_hex[-8:]}"
-        case_short = f"{case_hex[:8]}…{case_hex[-8:]}"
-        print(f"#{idx}")
-        print(f"  Item (enc): {item_short}")
-        print(f"  Case (enc): {case_short}")
-        print(f"  State    : {state}")
-        print(f"  Creator  : {creator}")
-        print(f"  Owner    : {owner}")
+        print(f"> Item #{idx}")
+        print(f">   Case : {case_str}")
+        print(f">   Item : {item_str}")
+        print(f">   State: {state}")
+        print(f">   Creator: {creator}")
+        print(f">   Owner  : {owner}")
         print()
+
     return 0
