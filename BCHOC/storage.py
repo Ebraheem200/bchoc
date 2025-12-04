@@ -2,10 +2,10 @@
 """
 Low-level binary I/O for the blockchain file.
 
-Step 2 version:
-- init_file()  : create file + INITIAL (genesis) block if missing
+- init_file(): create file + INITIAL (genesis) block if missing
 - iter_blocks(): iterate (Header, data) over all blocks
 - append_block(): append a new block linked by prev_hash
+- get_latest_items(): map latest state per item_id
 """
 
 import os
@@ -13,40 +13,44 @@ import struct
 import time
 import hashlib
 from dataclasses import dataclass
+from typing import Iterator, Tuple, Dict, Optional
+
+from .env import BLOCKCHAIN_FILE
 
 # ---------------- Binary layout ----------------
-
+#
 # 32s  d  32s     32s     12s    12s     12s     I
 # prev ts case_id item_id state  creator owner  data_length
+# ---------------------------------------------------------
+
 HEADER_FMT = "32s d 32s 32s 12s 12s 12s I"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 
 def pad_state(name: str) -> bytes:
+    """Pad a state name (ASCII) to 12 bytes with NULs."""
     raw = name.encode("ascii")
     if len(raw) > 12:
         raise ValueError("state name too long")
     return raw + b"\x00" * (12 - len(raw))
 
-
 def _zero32() -> bytes:
     return b"\x00" * 32
 
-
 def _hash_block(header_bytes: bytes, data: bytes) -> bytes:
+    """Compute SHA-256 hash of header+data (full block)."""
     h = hashlib.sha256()
     h.update(header_bytes)
     h.update(data)
     return h.digest()
 
-
-def resolve_path() -> str:
-    """Blockchain file path from env or default."""
-    return os.getenv("BCHOC_FILE_PATH") or "bchoc.dat"
-
+def resolve_path(path: Optional[str] = None) -> str:
+    """Blockchain file path from argument or env or default."""
+    if path is not None:
+        return path
+    return BLOCKCHAIN_FILE
 
 # ---------------- Header dataclass ----------------
-
 @dataclass
 class Header:
     prev_hash: bytes
@@ -78,17 +82,15 @@ class Header:
         fields = struct.unpack(HEADER_FMT, buf)
         return Header(*fields)
 
-
 # ---------------- Genesis (INITIAL) block ----------------
-
-def _genesis_block() -> tuple[Header, bytes]:
+def _genesis_block() -> Tuple[Header, bytes]:
     """
     INITIAL block:
     - prev_hash = 32 zero bytes
     - timestamp = 0.0
-    - case_id   = b"0"*32
+    - case_id   = b"0"*32   (ASCII '0', not NULs)
     - item_id   = b"0"*32
-    - state     = "INITIAL"
+    - state     = "INITIAL" (padded to 12 bytes)
     - creator   = 12 zero bytes
     - owner     = 12 zero bytes
     - data      = b"Initial block\\0"
@@ -113,42 +115,30 @@ def _genesis_block() -> tuple[Header, bytes]:
     )
     return header, data
 
-
 # ---------------- Public API ----------------
-
-def init_file(path: str | None = None) -> tuple[bool, str]:
-    """
-    Ensure blockchain file exists with a valid INITIAL block.
-    Returns (created, message).
-    """
-    p = path or resolve_path()
+def init_file(path: Optional[str] = None) -> Tuple[bool, str]:
+    p = resolve_path(path)
 
     if not os.path.exists(p):
-        # create new file with genesis block
         header, data = _genesis_block()
         with open(p, "wb") as f:
             f.write(header.pack())
             f.write(data)
         return True, "Blockchain file not found. Created INITIAL block."
 
-    # basic sanity check on existing file
     with open(p, "rb") as f:
         first = f.read(HEADER_SIZE)
         if len(first) != HEADER_SIZE:
             raise SystemExit("Corrupted blockchain file (short header).")
         hdr = Header.unpack(first)
         state = hdr.state.rstrip(b"\x00").decode("ascii", errors="replace")
-        if state != "INITIAL":
-            raise SystemExit("Invalid genesis block (state != INITIAL).")
+        if state != "INITIAL" or hdr.case_id != b"0" * 32 or hdr.item_id != b"0" * 32:
+            raise SystemExit("Invalid genesis block (not INITIAL with zero IDs).")
 
     return False, "Blockchain file found with INITIAL block."
 
-
-def iter_blocks(path: str | None = None):
-    """
-    Yield (header, data) for each block in the chain.
-    """
-    p = path or resolve_path()
+def iter_blocks(path: Optional[str] = None) -> Iterator[Tuple[Header, bytes]]:
+    p = resolve_path(path)
     with open(p, "rb") as f:
         while True:
             header_bytes = f.read(HEADER_SIZE)
@@ -162,7 +152,6 @@ def iter_blocks(path: str | None = None):
                 raise SystemExit("Corrupted blockchain file (truncated data).")
             yield hdr, data
 
-
 def append_block(
     *,
     case_id: bytes,
@@ -171,21 +160,14 @@ def append_block(
     creator: bytes,
     owner: bytes,
     data: bytes,
-    path: str | None = None,
+    path: Optional[str] = None,
 ) -> None:
-    """
-    Append a new block to the blockchain.
-    - case_id, item_id: already-encoded 32B fields (e.g. AES-enc32).
-    - state: ASCII state name (e.g. "CHECKEDIN").
-    - creator, owner: up to 12B each, will be right-padded with NULs.
-    """
-    p = path or resolve_path()
+    
+    p = resolve_path(path)
 
-    # Ensure file + genesis exist
     if not os.path.exists(p):
         init_file(p)
 
-    # Compute prev_hash = hash(last block)
     prev_hash = _zero32()
     for hdr, dat in iter_blocks(p):
         prev_hash = _hash_block(hdr.pack(), dat)
@@ -211,16 +193,17 @@ def append_block(
         f.write(hdr_new.pack())
         f.write(data)
 
-def get_latest_items(path: str | None = None) -> dict[bytes, tuple[bytes, bytes, bytes, bytes]]:
-    p = path or resolve_path()
-    latest: dict[bytes, tuple[bytes, bytes, bytes, bytes]] = {}
+
+def get_latest_items(path: Optional[str] = None) -> Dict[bytes, Tuple[bytes, bytes, bytes, bytes]]:
+    p = resolve_path(path)
+    latest: Dict[bytes, Tuple[bytes, bytes, bytes, bytes]] = {}
 
     if not os.path.exists(p):
         return latest
 
     for hdr, _data in iter_blocks(p):
         state = hdr.state.rstrip(b"\x00").decode("ascii", errors="replace")
-        # skip the genesis block (INITIAL with "0"*32 IDs)
+
         if state == "INITIAL" and hdr.case_id == b"0" * 32 and hdr.item_id == b"0" * 32:
             continue
 
@@ -231,5 +214,3 @@ def get_latest_items(path: str | None = None) -> dict[bytes, tuple[bytes, bytes,
             hdr.owner,
         )
     return latest
-
-

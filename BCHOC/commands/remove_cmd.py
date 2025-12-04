@@ -1,25 +1,15 @@
 # bchoc/commands/remove_cmd.py
-"""
-Implements: bchoc remove
-- CREATOR password required.
-- Item must currently be CHECKEDIN.
-- New state must be one of: DISPOSED, DESTROYED, RELEASED.
-- RELEASED requires an owner name (who receives the item).
-"""
+from datetime import datetime, timezone
 
-from bchoc.env import get_role_for_password
-from bchoc.ids import item_id_to_enc32
+from bchoc.env import require_creator_password
+from bchoc.ids import item_id_to_enc32, enc32_to_case_uuid
 from bchoc.storage import get_latest_items, append_block
 
 TERMINAL_STATES = {"DISPOSED", "DESTROYED", "RELEASED"}
 
-
 def run_remove(args) -> int:
-    # 1) Password must be CREATOR
-    role = get_role_for_password(args.password)
-    if role != "CREATOR":
-        print("> Invalid password (CREATOR role required).")
-        return 1
+    # 1) Password must be CREATOR (exits with code 1 if invalid)
+    require_creator_password(args.password)
 
     # 2) Parse item id
     try:
@@ -47,7 +37,7 @@ def run_remove(args) -> int:
         print(f"> Item {item_id_int} must be CHECKEDIN to remove (current: {state}).")
         return 1
 
-    # 4) Validate target state
+    # 4) Validate target state (reason from -y / --why)
     target_state = args.state.upper()
     if target_state not in TERMINAL_STATES:
         print("> Invalid remove state. Use one of: DISPOSED, DESTROYED, RELEASED.")
@@ -55,7 +45,7 @@ def run_remove(args) -> int:
 
     # 5) Owner for RELEASED, blank otherwise
     if target_state == "RELEASED":
-        if not args.owner:
+        if not getattr(args, "owner", None):
             print("> Owner is required when state is RELEASED.")
             return 1
         owner_bytes = args.owner.encode("ascii")[:12]
@@ -69,10 +59,21 @@ def run_remove(args) -> int:
         state=target_state,
         creator=creator_bytes.rstrip(b"\x00"),
         owner=owner_bytes,
-        data=b"",
+        data=b"",  # you could store reason/owner text here if desired
     )
 
+    # 7) Output (include case + time for consistency)
+    case_str = enc32_to_case_uuid(case_enc)
+    action_time = (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+    print(f"> Case: {case_str}")
     print(f"> Item {item_id_int} marked as {target_state}.")
     if target_state == "RELEASED":
         print(f"> Released to: {args.owner}")
+    print(f"> Time of action: {action_time}")
+
     return 0

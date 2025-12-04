@@ -1,6 +1,6 @@
 # bchoc/ids.py
 import uuid
-from bchoc.crypto import encrypt32, decrypt32
+from .crypto import encrypt32, decrypt32
 
 def _pad32(raw: bytes) -> bytes:
     if len(raw) > 32:
@@ -15,24 +15,18 @@ def _strip_zeros(raw32: bytes, expected: int) -> bytes:
         raise ValueError("unexpected length after unpad")
     return core
 
-# -------- case_id: UUID string <-> enc32 --------
-
 def case_uuid_to_enc32(case_id: str) -> bytes:
-    """UUID string -> 32B plaintext (16B uuid + zeros) -> AES-ECB enc32."""
     try:
         u = uuid.UUID(case_id)
     except Exception as e:
         raise ValueError(f"Invalid UUID: {case_id}") from e
-    plain32 = _pad32(u.bytes)  # 16B uuid + 16 zeros
+    plain32 = _pad32(u.bytes)
     return encrypt32(plain32)
 
 def enc32_to_case_uuid(enc32: bytes) -> str:
-    """Reverse of case_uuid_to_enc32."""
     plain32 = decrypt32(enc32)
     raw16 = _strip_zeros(plain32, 16)
     return str(uuid.UUID(bytes=raw16))
-
-# -------- item_id: int <-> enc32 --------
 
 def _int_to_4(n: int) -> bytes:
     if not (0 <= n <= 0xFFFFFFFF):
@@ -45,13 +39,11 @@ def _4_to_int(b: bytes) -> int:
     return int.from_bytes(b, "big", signed=False)
 
 def item_id_to_enc32(item_id: int) -> bytes:
-    """int -> 4B big-endian -> pad to 32 -> AES-ECB enc32."""
     raw4 = _int_to_4(item_id)
     plain32 = _pad32(raw4)
     return encrypt32(plain32)
 
 def enc32_to_item_id(enc32: bytes) -> int:
-    """Reverse of item_id_to_enc32."""
     plain32 = decrypt32(enc32)
     raw4 = _strip_zeros(plain32, 4)
     return _4_to_int(raw4)
