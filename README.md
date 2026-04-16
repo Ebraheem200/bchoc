@@ -1,59 +1,44 @@
-# bchoc
+# BCHOC
 
-Package: bchoc/
+BCHOC is a Python command-line blockchain-style chain of custody system for digital evidence tracking. It stores evidence records in an append-only binary file and verifies the integrity of the chain using SHA-256 hashes, encrypted identifiers, and strict evidence state transitions.
 
-init.py
-Marks this directory as a Python package.
+The project simulates how evidence is added, checked out, checked in, removed, summarized, and verified in a secure chain-of-custody workflow.
 
-main.py
-Program entry point for bchoc. Builds the parser and dispatches to commands.
+---
 
-cli.py
-Argparse setup. Defines subcommands and routes to bchoc/commands/*.
+## Features
 
-models.py
-Binary header layout (HEADER_FMT), item states, and the Header dataclass. Also includes a helper to pad state to 12 bytes.
+- Command-line interface built with `argparse`
+- Append-only binary file storage
+- SHA-256 hash linking between blocks
+- AES encryption helpers for case IDs and item IDs
+- Role-based password validation through environment variables
+- Evidence state tracking using a strict state machine
+- Full blockchain verification for hash links, file structure, and item history
+- Commands for initializing, adding, checking out, checking in, removing, showing, summarizing, and verifying evidence records
 
-crypto.py
-AES-ECB helpers for 32-byte fields (case ID and item ID). Replace the placeholder key with the assignment key bytes.
+---
 
-ids.py
-Converts external IDs to 32-byte raw buffers before encryption and back again (UUID string ↔ 32 bytes, item int ↔ 32 bytes).
+## Project Structure
 
-env.py
-Reads BCHOC_FILE_PATH and the five role passwords from environment variables.
-
-storage.py
-Low-level, append-only binary I/O: create/verify genesis, pack/unpack headers, iterate blocks, append blocks, scan items, item state, per-case summaries, and ID decrypt helpers for display.
-
-verify.py
-Full-chain verification: checks SHA-256 links between blocks, file structure, and the per-item state machine (add → CHECKEDIN, alternate CHECKEDIN/CHECKEDOUT, terminal states stop future actions).
-
-Commands: bchoc/commands/
-
-init.py
-Empty; enables package imports.
-
-init_cmd.py
-Implements bchoc init: create the file and write the INITIAL block if missing; otherwise verify the first block.
-
-add_cmd.py
-bchoc add: creator-password check, reject duplicate item IDs, append a CHECKEDIN block per item.
-
-checkout_cmd.py
-bchoc checkout: any valid role password, item must be CHECKEDIN, append CHECKEDOUT with new owner.
-
-checkin_cmd.py
-bchoc checkin: any valid role password, item must be CHECKEDOUT, append CHECKEDIN.
-
-remove_cmd.py
-bchoc remove: creator password required, item must be CHECKEDIN, set DISPOSED/DESTROYED/RELEASED and store release owner if needed.
-
-show_cmd.py
-bchoc show: list cases, items, or history. Mask IDs unless a valid password is provided; support count and reverse order.
-
-summary_cmd.py
-bchoc summary: per-case totals by the latest state of each item.
-
-verify_cmd.py
-bchoc verify: run verification and print “ok” or the first error, returning a non-zero exit code on failure.
+```text
+bchoc/
+├── __init__.py
+├── main.py
+├── cli.py
+├── models.py
+├── crypto.py
+├── ids.py
+├── env.py
+├── storage.py
+├── verify.py
+└── commands/
+    ├── __init__.py
+    ├── init_cmd.py
+    ├── add_cmd.py
+    ├── checkout_cmd.py
+    ├── checkin_cmd.py
+    ├── remove_cmd.py
+    ├── show_cmd.py
+    ├── summary_cmd.py
+    └── verify_cmd.py
